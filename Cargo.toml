@@ -1,0 +1,16 @@
+[package]
+name = "scener"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.71"
+chrono = { version = "0.4.26", features = ["serde"] }
+clap = "4.3.3"
+clap_derive = "4.3.2"
+duct = "0.13.6"
+rand = "0.8.5"
+serde = { version = "1.0.164", features = ["derive"] }
+serde_json = "1.0.96"
+tempfile = "3.6.0"
+xdg = "2.5.0"
