@@ -151,18 +151,22 @@ pub fn run(action: RunAction) -> Result<()> {
             println!();
         }
 
-        if !unchecked && !result.succeeded {
-            bail!("command terminated with non-zero exit code");
-        }
-
         env = result.new_env;
         records.push(CommandRecord { command, output: result.output, succeeded: result.succeeded });
+
+        if !unchecked && !result.succeeded {
+            break;
+        }
     }
 
+    let succeeded = records.iter().all(|r| r.succeeded);
     let session = Session::new(Utc::now(), records);
     write_session(&session).context("could not write session data")?;
     eprintln!("\nsession {} recorded", session.name);
 
+    if !unchecked && !succeeded {
+        bail!("command terminated with non-zero exit code");
+    }
     Ok(())
 }
 
