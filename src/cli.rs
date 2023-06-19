@@ -32,6 +32,8 @@ pub struct ShowAction {
 pub struct ListAction {
     #[arg(short, long)]
     summary: bool,
+    #[arg(short, long)]
+    full: bool,
     #[arg(short, long, short_alias = 'n', default_value = "10")]
     limit: usize,
 }
@@ -205,19 +207,25 @@ pub fn show(action: ShowAction) -> Result<()> {
 }
 
 pub fn list(action: ListAction) -> Result<()> {
-    let ListAction { summary, limit } = action;
+    let ListAction { summary, full, limit } = action;
 
     let sessions = list_sessions().context("could not list sessions")?;
     let limit = limit.min(sessions.len());
-    println!("{} / {} sessions", limit, sessions.len());
+    println!("[{} / {} sessions]", limit, sessions.len());
 
     for (index, session) in sessions[0..limit].iter().enumerate() {
-        println!("{}: {} ({})", index + 1, session.name, format_datetime(session.recorded_at));
+        println!("\n{}: {} ({})", index + 1, session.name, format_datetime(session.recorded_at));
         if summary {
             continue;
         }
-        for command in &session.commands {
-            println!("  $ {}", command);
+        let len = session.commands.len();
+        let n = if full { len } else { 5.min(len) };
+        let rem = len - n;
+        for command in session.commands.iter().take(n) {
+            println!("    $ {}", command);
+        }
+        if rem > 0 {
+            println!("    ... ({} more commands)", rem);
         }
     }
 
