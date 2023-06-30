@@ -24,6 +24,8 @@ pub struct RunAction {
 
 #[derive(Debug, Parser)]
 pub struct ShowAction {
+    #[arg(short, long)]
+    script: bool,
     session: Vec<String>,
 }
 
@@ -181,7 +183,7 @@ pub fn run(action: RunAction) -> Result<()> {
 }
 
 pub fn show(action: ShowAction) -> Result<()> {
-    let ShowAction { session: target_args } = action;
+    let ShowAction { script, session: target_args } = action;
 
     let sessions = list_sessions().context("could not list sessions")?;
     let targets: Vec<String> = match target_args.is_empty() && !sessions.is_empty() {
@@ -195,6 +197,11 @@ pub fn show(action: ShowAction) -> Result<()> {
         eprintln!("session {} ({})", session.name, format_datetime(session.recorded_at));
 
         for (i, record) in session.records.into_iter().enumerate() {
+            if script {
+                println!("{}", record.command);
+                continue;
+            }
+
             if !record.status.is_executed() {
                 continue;
             }
