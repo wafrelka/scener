@@ -13,6 +13,8 @@ use crate::{
 #[derive(Debug, Parser)]
 pub struct RunAction {
     #[arg(short, long)]
+    interactive: bool,
+    #[arg(short, long)]
     unchecked: bool,
     #[arg(short, long, conflicts_with = "session", conflicts_with = "command")]
     file: Vec<PathBuf>,
@@ -116,32 +118,59 @@ fn lookup_commands<I: Iterator<Item = S>, S: AsRef<str>>(
         .collect())
 }
 
+fn run_command(env: Environment, command: String) -> Result<(Environment, CommandRecord, bool)> {
+    println!("$ {}", command);
+
+    let result = execute(&command, env, &mut std::io::stdout().lock())
+        .with_context(|| format!("could not execute command {}", command))?;
+
+    if needs_newline(&result.output) {
+        println!();
+    }
+
+    let status = match result.succeeded {
+        true => CommandStatus::Succeeded,
+        false => CommandStatus::Failed,
+    };
+    let record = CommandRecord { command, output: result.output, status };
+    let ok = record.status.is_succeeded();
+
+    Ok((result.new_env, record, ok))
+}
+
 pub fn run(action: RunAction) -> Result<()> {
-    let RunAction { unchecked, file: file_args, session: session_args, command: command_args } =
-        action;
+    let RunAction {
+        interactive,
+        unchecked,
+        file: file_args,
+        session: session_args,
+        command: command_args,
+    } = action;
 
-    let has_file = !file_args.is_empty();
-    let has_session = !session_args.is_empty();
-    let has_command = !command_args.is_empty();
+    let checked = !unchecked;
+    let from_file = !file_args.is_empty();
+    let from_session = !session_args.is_empty();
+    let from_command = !command_args.is_empty();
 
-    let commands = match (has_file, has_session, has_command) {
-        (true, _, _) => {
-            read_script_from_files(file_args.iter()).context("could not read script from file")?
-        }
-        (_, true, _) => {
-            let sessions = list_sessions().context("could not list sessions")?;
-            lookup_commands(session_args.iter(), &sessions).context("could not lookup commands")?
-        }
-        (_, _, true) => command_args,
-        _ => read_script_from_stdin().context("could not read script from STDIN")?,
+    let commands = if from_file {
+        read_script_from_files(file_args.iter()).context("could not read script from file")?
+    } else if from_session {
+        let sessions = list_sessions().context("could not list sessions")?;
+        lookup_commands(session_args.iter(), &sessions).context("could not lookup commands")?
+    } else if from_command {
+        command_args
+    } else if !interactive {
+        read_script_from_stdin().context("could not read script from STDIN")?
+    } else {
+        Vec::new()
     };
 
+    let mut failed = false;
     let mut env = Environment::default();
     let mut records = Vec::new();
-    let mut failed = false;
 
     for (i, command) in commands.into_iter().enumerate() {
-        if !unchecked && failed {
+        if checked && failed {
             records.push(CommandRecord {
                 command,
                 output: Default::default(),
@@ -149,34 +178,44 @@ pub fn run(action: RunAction) -> Result<()> {
             });
             continue;
         }
-
         if i > 0 {
             println!();
         }
-        println!("$ {}", command);
+        let (e, r, ok) = run_command(env, command)?;
+        failed = failed || !ok;
+        env = e;
+        records.push(r);
+    }
 
-        let result = execute(&command, env, &mut std::io::stdout().lock())
-            .with_context(|| format!("could not execute command {}", command))?;
+    if interactive {
+        let mut lines = std::io::stdin().lines();
+        for i in 0.. {
+            if i > 0 {
+                println!();
+            }
 
-        if needs_newline(&result.output) {
-            println!();
+            eprint!("==> ");
+            let command = match lines.next() {
+                Some(c) => c.context("could not read next command from STDIN")?,
+                None => break,
+            };
+
+            let (e, r, ok) = run_command(env, command)?;
+            failed = failed || !ok;
+            env = e;
+            records.push(r);
+
+            if checked && failed {
+                break;
+            }
         }
-
-        env = result.new_env;
-        failed = failed || !result.succeeded;
-
-        let status = match result.succeeded {
-            true => CommandStatus::Succeeded,
-            false => CommandStatus::Failed,
-        };
-        records.push(CommandRecord { command, output: result.output, status });
     }
 
     let session = Session::new(Utc::now(), records);
     write_session(&session).context("could not write session data")?;
     eprintln!("\nsession {} recorded", session.name);
 
-    if !unchecked && failed {
+    if checked && failed {
         bail!("command terminated with non-zero exit code");
     }
     Ok(())

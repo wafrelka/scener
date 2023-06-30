@@ -58,6 +58,13 @@ impl CommandStatus {
             CommandStatus::Skipped => false,
         }
     }
+    pub fn is_succeeded(&self) -> bool {
+        match self {
+            CommandStatus::Succeeded => true,
+            CommandStatus::Failed => false,
+            CommandStatus::Skipped => false,
+        }
+    }
 }
 
 impl Session {
