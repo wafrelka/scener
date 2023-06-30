@@ -6,11 +6,19 @@ use chrono::{DateTime, Utc};
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandStatus {
+    Succeeded,
+    Failed,
+    Skipped,
+}
+
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct CommandRecord {
     pub command: String,
     pub output: String,
-    pub succeeded: bool,
+    pub status: CommandStatus,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -20,11 +28,17 @@ pub struct Session {
     pub records: Vec<CommandRecord>,
 }
 
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct CommandRecordSummary {
+    pub command: String,
+    pub status: CommandStatus,
+}
+
 #[derive(Debug, PartialEq)]
 pub struct SessionSummary {
     pub name: String,
     pub recorded_at: DateTime<Utc>,
-    pub commands: Vec<String>,
+    pub records: Vec<CommandRecordSummary>,
 }
 
 fn generate_session_key() -> String {
@@ -36,16 +50,27 @@ fn generate_session_key() -> String {
     format!("{}-{}", now, suffix_string)
 }
 
+impl CommandStatus {
+    pub fn is_executed(&self) -> bool {
+        match self {
+            CommandStatus::Succeeded => true,
+            CommandStatus::Failed => true,
+            CommandStatus::Skipped => false,
+        }
+    }
+}
+
 impl Session {
     pub fn new(recorded_at: DateTime<Utc>, records: Vec<CommandRecord>) -> Self {
         Session { name: generate_session_key(), recorded_at, records }
     }
     pub fn summary(&self) -> SessionSummary {
-        SessionSummary {
-            name: self.name.clone(),
-            recorded_at: self.recorded_at,
-            commands: self.records.iter().map(|r| r.command.clone()).collect(),
-        }
+        let records = self
+            .records
+            .iter()
+            .map(|r| CommandRecordSummary { command: r.command.clone(), status: r.status })
+            .collect();
+        SessionSummary { name: self.name.clone(), recorded_at: self.recorded_at, records }
     }
 }
 
@@ -86,12 +111,7 @@ fn list_sessions_from_dir(dir: impl AsRef<Path>) -> Result<Vec<SessionSummary>> 
         let path = entry.path();
         let session = read_session_from_file(&path)
             .with_context(|| format!("could not read session file at {}", path.display()))?;
-        let summary = SessionSummary {
-            name: session.name,
-            recorded_at: session.recorded_at,
-            commands: session.records.into_iter().map(|record| record.command).collect(),
-        };
-        sessions.push(summary);
+        sessions.push(session.summary());
     }
 
     sessions.sort_by_cached_key(|summary| (summary.recorded_at, summary.name.clone()));
@@ -147,8 +167,16 @@ mod test {
             name: "test".into(),
             recorded_at: now,
             records: vec![
-                CommandRecord { command: "cmd1".into(), output: "out1".into(), succeeded: true },
-                CommandRecord { command: "cmd2".into(), output: "out2".into(), succeeded: false },
+                CommandRecord {
+                    command: "cmd1".into(),
+                    output: "out1".into(),
+                    status: CommandStatus::Succeeded,
+                },
+                CommandRecord {
+                    command: "cmd2".into(),
+                    output: "out2".into(),
+                    status: CommandStatus::Failed,
+                },
             ],
         };
 
@@ -171,7 +199,7 @@ mod test {
             records: vec![CommandRecord {
                 command: "cmd1".into(),
                 output: "out1".into(),
-                succeeded: true,
+                status: CommandStatus::Succeeded,
             }],
         };
         let session2 = Session {
@@ -180,7 +208,7 @@ mod test {
             records: vec![CommandRecord {
                 command: "cmd2".into(),
                 output: "out2".into(),
-                succeeded: false,
+                status: CommandStatus::Failed,
             }],
         };
         let session3 = Session {
@@ -189,7 +217,7 @@ mod test {
             records: vec![CommandRecord {
                 command: "cmd3".into(),
                 output: "out3".into(),
-                succeeded: false,
+                status: CommandStatus::Failed,
             }],
         };
 

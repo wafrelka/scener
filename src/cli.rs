@@ -6,7 +6,8 @@ use clap_derive::{Parser, Subcommand};
 
 use crate::{
     execute, list_sessions, read_script_from_files, read_script_from_stdin, read_session,
-    remove_session, write_session, CommandRecord, Environment, Session, SessionSummary,
+    remove_session, write_session, CommandRecord, CommandStatus, Environment, Session,
+    SessionSummary,
 };
 
 #[derive(Debug, Parser)]
@@ -113,7 +114,7 @@ fn lookup_commands<I: Iterator<Item = S>, S: AsRef<str>>(
     Ok(resolved
         .into_iter()
         .map(|name| sessions.iter().find(|session| session.name == name))
-        .flat_map(|session| session.unwrap().commands.clone())
+        .flat_map(|session| session.unwrap().records.iter().map(|r| r.command.clone()))
         .collect())
 }
 
@@ -139,8 +140,18 @@ pub fn run(action: RunAction) -> Result<()> {
 
     let mut env = Environment::default();
     let mut records = Vec::new();
+    let mut failed = false;
 
     for (i, command) in commands.into_iter().enumerate() {
+        if !unchecked && failed {
+            records.push(CommandRecord {
+                command,
+                output: Default::default(),
+                status: CommandStatus::Skipped,
+            });
+            continue;
+        }
+
         if i > 0 {
             println!();
         }
@@ -154,19 +165,20 @@ pub fn run(action: RunAction) -> Result<()> {
         }
 
         env = result.new_env;
-        records.push(CommandRecord { command, output: result.output, succeeded: result.succeeded });
+        failed = failed || !result.succeeded;
 
-        if !unchecked && !result.succeeded {
-            break;
-        }
+        let status = match result.succeeded {
+            true => CommandStatus::Succeeded,
+            false => CommandStatus::Failed,
+        };
+        records.push(CommandRecord { command, output: result.output, status });
     }
 
-    let succeeded = records.iter().all(|r| r.succeeded);
     let session = Session::new(Utc::now(), records);
     write_session(&session).context("could not write session data")?;
     eprintln!("\nsession {} recorded", session.name);
 
-    if !unchecked && !succeeded {
+    if !unchecked && failed {
         bail!("command terminated with non-zero exit code");
     }
     Ok(())
@@ -187,6 +199,9 @@ pub fn show(action: ShowAction) -> Result<()> {
         eprintln!("session {} ({})", session.name, format_datetime(session.recorded_at));
 
         for (i, record) in session.records.into_iter().enumerate() {
+            if !record.status.is_executed() {
+                continue;
+            }
             if i > 0 {
                 println!();
             }
@@ -218,11 +233,16 @@ pub fn list(action: ListAction) -> Result<()> {
         if summary {
             continue;
         }
-        let len = session.commands.len();
+        let len = session.records.len();
         let n = if full { len } else { 5.min(len) };
         let rem = len - n;
-        for command in session.commands.iter().take(n) {
-            println!("    $ {}", command);
+        for record in session.records.iter().take(n) {
+            let marker = match record.status {
+                CommandStatus::Succeeded => "$",
+                CommandStatus::Failed => "$",
+                CommandStatus::Skipped => "?",
+            };
+            println!("    {} {}", marker, record.command);
         }
         if rem > 0 {
             println!("    ... ({} more commands)", rem);
@@ -265,10 +285,9 @@ impl Cli {
 mod test {
     use chrono::DateTime;
 
-    use crate::cli::{lookup_commands, needs_newline, parse_index};
-    use crate::SessionSummary;
+    use crate::{CommandRecordSummary, SessionSummary};
 
-    use super::resolve_target;
+    use super::*;
 
     #[test]
     fn test_needs_newline_empty() {
@@ -314,8 +333,8 @@ mod test {
     fn test_resolve_target_by_index() {
         let now = DateTime::parse_from_rfc3339("2020-01-01T00:00:00Z").unwrap().into();
         let sessions = vec![
-            SessionSummary { name: "test1".into(), recorded_at: now, commands: Vec::new() },
-            SessionSummary { name: "test2".into(), recorded_at: now, commands: Vec::new() },
+            SessionSummary { name: "test1".into(), recorded_at: now, records: Vec::new() },
+            SessionSummary { name: "test2".into(), recorded_at: now, records: Vec::new() },
         ];
         let actual = resolve_target("@2", &sessions);
         let expected = Some("test2".into());
@@ -326,8 +345,8 @@ mod test {
     fn test_resolve_target_by_name() {
         let now = DateTime::parse_from_rfc3339("2020-01-01T00:00:00Z").unwrap().into();
         let sessions = vec![
-            SessionSummary { name: "test1".into(), recorded_at: now, commands: Vec::new() },
-            SessionSummary { name: "test2".into(), recorded_at: now, commands: Vec::new() },
+            SessionSummary { name: "test1".into(), recorded_at: now, records: Vec::new() },
+            SessionSummary { name: "test2".into(), recorded_at: now, records: Vec::new() },
         ];
         let actual = resolve_target("test1", &sessions);
         let expected = Some("test1".into());
@@ -338,8 +357,8 @@ mod test {
     fn test_resolve_target_index_out_of_range() {
         let now = DateTime::parse_from_rfc3339("2020-01-01T00:00:00Z").unwrap().into();
         let sessions = vec![
-            SessionSummary { name: "test1".into(), recorded_at: now, commands: Vec::new() },
-            SessionSummary { name: "test2".into(), recorded_at: now, commands: Vec::new() },
+            SessionSummary { name: "test1".into(), recorded_at: now, records: Vec::new() },
+            SessionSummary { name: "test2".into(), recorded_at: now, records: Vec::new() },
         ];
         let actual = resolve_target("@123", &sessions);
         assert!(actual.is_err());
@@ -349,8 +368,8 @@ mod test {
     fn test_resolve_target_unknown_name() {
         let now = DateTime::parse_from_rfc3339("2020-01-01T00:00:00Z").unwrap().into();
         let sessions = vec![
-            SessionSummary { name: "test1".into(), recorded_at: now, commands: Vec::new() },
-            SessionSummary { name: "test2".into(), recorded_at: now, commands: Vec::new() },
+            SessionSummary { name: "test1".into(), recorded_at: now, records: Vec::new() },
+            SessionSummary { name: "test2".into(), recorded_at: now, records: Vec::new() },
         ];
         let actual = resolve_target("test3", &sessions);
         assert!(actual.is_err());
@@ -363,12 +382,34 @@ mod test {
             SessionSummary {
                 name: "test1".into(),
                 recorded_at: now,
-                commands: vec!["cmd1a".into(), "cmd1b".into()],
+                records: vec![
+                    CommandRecordSummary {
+                        command: "cmd1a".into(),
+                        status: CommandStatus::Succeeded,
+                    },
+                    CommandRecordSummary {
+                        command: "cmd1b".into(),
+                        status: CommandStatus::Succeeded,
+                    },
+                ],
             },
             SessionSummary {
                 name: "test2".into(),
                 recorded_at: now,
-                commands: vec!["cmd2a".into(), "cmd2b".into(), "cmd2c".into()],
+                records: vec![
+                    CommandRecordSummary {
+                        command: "cmd2a".into(),
+                        status: CommandStatus::Succeeded,
+                    },
+                    CommandRecordSummary {
+                        command: "cmd2b".into(),
+                        status: CommandStatus::Succeeded,
+                    },
+                    CommandRecordSummary {
+                        command: "cmd2c".into(),
+                        status: CommandStatus::Succeeded,
+                    },
+                ],
             },
         ];
         let actual = lookup_commands(vec!["test2", "test1"].iter(), &sessions);
