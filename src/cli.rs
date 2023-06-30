@@ -224,10 +224,9 @@ pub fn list(action: ListAction) -> Result<()> {
 
     let sessions = list_sessions().context("could not list sessions")?;
     let limit = limit.min(sessions.len());
-    println!("[{} / {} sessions]", limit, sessions.len());
 
     for (index, session) in sessions[0..limit].iter().enumerate() {
-        println!("\n{}: {} ({})", index + 1, session.name, format_datetime(session.recorded_at));
+        println!("{}: {} ({})", index + 1, session.name, format_datetime(session.recorded_at));
         let len = session.records.len();
         let n = if full { len } else { 5.min(len) };
         let rem = len - n;
@@ -242,7 +241,10 @@ pub fn list(action: ListAction) -> Result<()> {
         if rem > 0 {
             println!("    ... ({} more commands)", rem);
         }
+        println!();
     }
+
+    println!("({} / {} sessions)", limit, sessions.len());
 
     Ok(())
 }
