@@ -24,8 +24,6 @@ pub struct RunAction {
 
 #[derive(Debug, Parser)]
 pub struct ShowAction {
-    #[arg(short, long)]
-    summary: bool,
     session: Vec<String>,
 }
 
@@ -183,7 +181,7 @@ pub fn run(action: RunAction) -> Result<()> {
 }
 
 pub fn show(action: ShowAction) -> Result<()> {
-    let ShowAction { summary, session: target_args } = action;
+    let ShowAction { session: target_args } = action;
 
     let sessions = list_sessions().context("could not list sessions")?;
     let targets: Vec<String> = match target_args.is_empty() && !sessions.is_empty() {
@@ -204,10 +202,6 @@ pub fn show(action: ShowAction) -> Result<()> {
                 println!();
             }
             println!("$ {}", record.command);
-
-            if summary {
-                continue;
-            }
 
             print!("{}", record.output);
             if needs_newline(&record.output) {
