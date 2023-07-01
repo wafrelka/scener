@@ -12,15 +12,15 @@ use crate::{
 
 #[derive(Debug, Parser)]
 pub struct RunAction {
-    #[arg(short, long)]
+    #[arg(short, long, conflicts_with_all = ["session", "file", "command"])]
     interactive: bool,
     #[arg(short, long)]
     unchecked: bool,
-    #[arg(short, long, conflicts_with_all = ["session", "command"])]
+    #[arg(short, long, conflicts_with_all = ["interactive", "session", "command"])]
     file: Vec<PathBuf>,
-    #[arg(short, long, conflicts_with_all = ["file", "command"])]
+    #[arg(short, long, conflicts_with_all = ["interactive", "file", "command"])]
     session: Vec<String>,
-    #[arg(conflicts_with_all = ["file", "session"])]
+    #[arg(conflicts_with_all = ["interactive", "file", "session"])]
     command: Vec<String>,
 }
 
