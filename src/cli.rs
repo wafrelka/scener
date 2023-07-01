@@ -16,11 +16,11 @@ pub struct RunAction {
     interactive: bool,
     #[arg(short, long)]
     unchecked: bool,
-    #[arg(short, long, conflicts_with = "session", conflicts_with = "command")]
+    #[arg(short, long, conflicts_with_all = ["session", "command"])]
     file: Vec<PathBuf>,
-    #[arg(short, long, conflicts_with = "file", conflicts_with = "command")]
+    #[arg(short, long, conflicts_with_all = ["file", "command"])]
     session: Vec<String>,
-    #[arg(conflicts_with = "file", conflicts_with = "session")]
+    #[arg(conflicts_with_all = ["file", "session"])]
     command: Vec<String>,
 }
 
