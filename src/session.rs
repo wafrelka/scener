@@ -42,7 +42,7 @@ pub struct SessionSummary {
 }
 
 fn generate_session_key() -> String {
-    let now = Utc::now().format("%Y%d%m%H%M%S%3f");
+    let now = Utc::now().format("%Y%m%d%H%M%S%3f");
     let charset = b"0123456789abcdef";
     let mut rng = rand::thread_rng();
     let suffix = (0..8).flat_map(|_| charset.choose(&mut rng).copied().into_iter()).collect();
