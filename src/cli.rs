@@ -12,15 +12,15 @@ use crate::{
 
 #[derive(Debug, Parser)]
 pub struct RunAction {
-    #[arg(short, long, conflicts_with_all = ["session", "file", "command"])]
+    #[arg(short, long)]
     interactive: bool,
     #[arg(short, long)]
     unchecked: bool,
-    #[arg(short, long, conflicts_with_all = ["interactive", "session", "command"])]
+    #[arg(short, long, conflicts_with_all = ["session", "command"])]
     file: Vec<PathBuf>,
-    #[arg(short, long, conflicts_with_all = ["interactive", "file", "command"])]
+    #[arg(short, long, conflicts_with_all = ["file", "command"])]
     session: Vec<String>,
-    #[arg(conflicts_with_all = ["interactive", "file", "session"])]
+    #[arg(conflicts_with_all = ["file", "session"])]
     command: Vec<String>,
 }
 
@@ -165,12 +165,12 @@ pub fn run(action: RunAction) -> Result<()> {
         Vec::new()
     };
 
-    let mut failed = false;
+    let mut terminated = false;
     let mut env = Environment::default();
     let mut records = Vec::new();
 
     for (i, command) in commands.into_iter().enumerate() {
-        if checked && failed {
+        if terminated {
             records.push(CommandRecord {
                 command,
                 output: Default::default(),
@@ -178,19 +178,22 @@ pub fn run(action: RunAction) -> Result<()> {
             });
             continue;
         }
-        if i > 0 {
+        if !records.is_empty() {
             println!();
         }
         let (e, r, ok) = run_command(env, command)?;
-        failed = failed || !ok;
         env = e;
         records.push(r);
+        terminated = terminated || (checked && !ok);
     }
 
     if interactive {
         let mut lines = std::io::stdin().lines();
-        for i in 0.. {
-            if i > 0 {
+        loop {
+            if terminated {
+                break;
+            }
+            if !records.is_empty() {
                 println!();
             }
 
@@ -201,13 +204,9 @@ pub fn run(action: RunAction) -> Result<()> {
             };
 
             let (e, r, ok) = run_command(env, command)?;
-            failed = failed || !ok;
             env = e;
             records.push(r);
-
-            if checked && failed {
-                break;
-            }
+            terminated = terminated || (checked && !ok);
         }
     }
 
@@ -215,7 +214,7 @@ pub fn run(action: RunAction) -> Result<()> {
     write_session(&session).context("could not write session data")?;
     eprintln!("\nsession {} recorded", session.name);
 
-    if checked && failed {
+    if terminated {
         bail!("command terminated with non-zero exit code");
     }
     Ok(())
