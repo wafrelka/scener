@@ -169,7 +169,7 @@ pub fn run(action: RunAction) -> Result<()> {
     let mut env = Environment::default();
     let mut records = Vec::new();
 
-    for (i, command) in commands.into_iter().enumerate() {
+    for command in commands.into_iter() {
         if terminated {
             records.push(CommandRecord {
                 command,
