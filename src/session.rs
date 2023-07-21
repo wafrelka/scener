@@ -41,8 +41,8 @@ pub struct SessionSummary {
     pub records: Vec<CommandRecordSummary>,
 }
 
-fn generate_session_key() -> String {
-    let now = Utc::now().format("%Y%m%d%H%M%S%3f");
+fn generate_session_key(now: DateTime<Utc>) -> String {
+    let now = now.format("%Y%m%d%H%M%S%3f");
     let charset = b"0123456789abcdef";
     let mut rng = rand::thread_rng();
     let suffix = (0..8).flat_map(|_| charset.choose(&mut rng).copied().into_iter()).collect();
@@ -69,7 +69,7 @@ impl CommandStatus {
 
 impl Session {
     pub fn new(recorded_at: DateTime<Utc>, records: Vec<CommandRecord>) -> Self {
-        Session { name: generate_session_key(), recorded_at, records }
+        Session { name: generate_session_key(recorded_at), recorded_at, records }
     }
     pub fn summary(&self) -> SessionSummary {
         let records = self
