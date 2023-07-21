@@ -121,7 +121,7 @@ fn list_sessions_from_dir(dir: impl AsRef<Path>) -> Result<Vec<SessionSummary>> 
         sessions.push(session.summary());
     }
 
-    sessions.sort_by_cached_key(|summary| (summary.recorded_at, summary.name.clone()));
+    sessions.sort_by_cached_key(|summary| summary.name.clone());
     sessions.reverse();
 
     Ok(sessions)
