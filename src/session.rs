@@ -96,7 +96,7 @@ fn read_session_from_file(path: impl AsRef<Path>) -> Result<Session> {
     serde_json::from_reader(file).context("could not parse file")
 }
 
-fn list_sessions_from_dir(dir: impl AsRef<Path>) -> Result<Vec<SessionSummary>> {
+fn list_session_names_from_dir(dir: impl AsRef<Path>) -> Result<Vec<String>> {
     let dir = dir.as_ref();
 
     let mut sessions = Vec::new();
@@ -110,18 +110,15 @@ fn list_sessions_from_dir(dir: impl AsRef<Path>) -> Result<Vec<SessionSummary>> 
         if !is_file {
             continue;
         }
-        let fname = entry.file_name().into_string();
-        let ends_with_json = fname.map(|fname| fname.ends_with(".json")).unwrap_or(false);
-        if !ends_with_json {
-            continue;
+        if let Some(fname) = entry.file_name().as_os_str().to_str() {
+            if !fname.ends_with(".json") {
+                continue;
+            }
+            sessions.push(fname.strip_suffix(".json").unwrap().to_owned());
         }
-        let path = entry.path();
-        let session = read_session_from_file(&path)
-            .with_context(|| format!("could not read session file at {}", path.display()))?;
-        sessions.push(session.summary());
     }
 
-    sessions.sort_by_cached_key(|summary| summary.name.clone());
+    sessions.sort();
     sessions.reverse();
 
     Ok(sessions)
@@ -147,9 +144,9 @@ pub fn read_session(name: &str) -> Result<Session> {
         .with_context(|| format!("could not read session data from {}", path.display()))
 }
 
-pub fn list_sessions() -> Result<Vec<SessionSummary>> {
+pub fn list_session_names() -> Result<Vec<String>> {
     let session_dir = get_session_dir().context("could not locate session data directory")?;
-    list_sessions_from_dir(session_dir).context("could not list sessions in session directory")
+    list_session_names_from_dir(session_dir).context("could not list sessions in session directory")
 }
 
 pub fn remove_session(name: &str) -> Result<()> {
@@ -228,17 +225,16 @@ mod test {
             }],
         };
 
-        // Should be sorted by `recoreded_at` in desc order.
-        let expected = Some(vec![session3.summary(), session2.summary(), session1.summary()]);
+        let expected = Some(vec!["3".into(), "2".into(), "1".into()]);
 
         let temp_dir = TempDir::new().unwrap();
         let temp_path = temp_dir.path();
 
-        assert!(write_session_to_file(temp_path.join("a.json"), &session3).is_ok());
-        assert!(write_session_to_file(temp_path.join("b.json"), &session1).is_ok());
-        assert!(write_session_to_file(temp_path.join("c.json"), &session2).is_ok());
+        assert!(write_session_to_file(temp_path.join("3.json"), &session3).is_ok());
+        assert!(write_session_to_file(temp_path.join("1.json"), &session1).is_ok());
+        assert!(write_session_to_file(temp_path.join("2.json"), &session2).is_ok());
 
-        let sessions = list_sessions_from_dir(temp_path);
+        let sessions = list_session_names_from_dir(temp_path);
         assert_eq!(expected, sessions.ok());
     }
 }

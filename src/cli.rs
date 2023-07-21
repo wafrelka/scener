@@ -5,7 +5,7 @@ use chrono::{DateTime, Local, Utc};
 use clap_derive::{Parser, Subcommand};
 
 use crate::{
-    execute, list_sessions, read_script_from_files, read_script_from_stdin, read_session,
+    execute, list_session_names, read_script_from_files, read_script_from_stdin, read_session,
     remove_session, write_session, CommandRecord, CommandStatus, Environment, Session,
     SessionSummary,
 };
@@ -82,12 +82,12 @@ fn parse_index(s: &str) -> Option<usize> {
     }
 }
 
-fn resolve_target(target: &str, sessions: &[SessionSummary]) -> Result<String> {
+fn resolve_target(target: &str, session_names: &[String]) -> Result<String> {
     if let Some(index) = parse_index(target) {
-        let session = sessions.get(index).context("index out of range")?;
-        Ok(session.name.clone())
+        let name = session_names.get(index).context("index out of range")?;
+        Ok(name.clone())
     } else {
-        if !sessions.iter().any(|session| session.name == target) {
+        if !session_names.iter().any(|name| name == target) {
             bail!("could not find session {}", target);
         }
         Ok(target.to_owned())
@@ -96,26 +96,34 @@ fn resolve_target(target: &str, sessions: &[SessionSummary]) -> Result<String> {
 
 fn resolve_targets<I: Iterator<Item = S>, S: AsRef<str>>(
     targets: I,
-    sessions: &[SessionSummary],
+    session_names: &[String],
 ) -> Result<Vec<String>> {
     targets
         .map(|target| {
-            resolve_target(target.as_ref(), sessions)
+            resolve_target(target.as_ref(), session_names)
                 .with_context(|| format!("could not resolve target {}", target.as_ref()))
         })
         .collect()
 }
 
+fn collect_commands(sessions: &[SessionSummary]) -> Vec<String> {
+    sessions.iter().flat_map(|session| session.records.iter().map(|r| r.command.clone())).collect()
+}
+
 fn lookup_commands<I: Iterator<Item = S>, S: AsRef<str>>(
     targets: I,
-    sessions: &[SessionSummary],
+    session_names: &[String],
 ) -> Result<Vec<String>> {
-    let resolved = resolve_targets(targets, sessions).context("could not resolve targets")?;
-    Ok(resolved
+    let resolved = resolve_targets(targets, session_names).context("could not resolve targets")?;
+    let sessions = resolved
         .into_iter()
-        .map(|name| sessions.iter().find(|session| session.name == name))
-        .flat_map(|session| session.unwrap().records.iter().map(|r| r.command.clone()))
-        .collect())
+        .map(|name| {
+            read_session(&name)
+                .map(|session| session.summary())
+                .with_context(|| format!("could not read session {}", name))
+        })
+        .collect::<Result<Vec<SessionSummary>>>()?;
+    Ok(collect_commands(&sessions))
 }
 
 fn run_command(env: Environment, command: String) -> Result<(Environment, CommandRecord, bool)> {
@@ -155,8 +163,8 @@ pub fn run(action: RunAction) -> Result<()> {
     let commands = if from_file {
         read_script_from_files(file_args.iter()).context("could not read script from file")?
     } else if from_session {
-        let sessions = list_sessions().context("could not list sessions")?;
-        lookup_commands(session_args.iter(), &sessions).context("could not lookup commands")?
+        let session_names = list_session_names().context("could not list sessions")?;
+        lookup_commands(session_args.iter(), &session_names).context("could not lookup commands")?
     } else if from_command {
         command_args
     } else if !interactive {
@@ -223,10 +231,10 @@ pub fn run(action: RunAction) -> Result<()> {
 pub fn show(action: ShowAction) -> Result<()> {
     let ShowAction { script, session: target_args } = action;
 
-    let sessions = list_sessions().context("could not list sessions")?;
-    let targets: Vec<String> = match target_args.is_empty() && !sessions.is_empty() {
-        true => vec![sessions[0].name.clone()],
-        false => resolve_targets(target_args.iter(), &sessions)
+    let session_names = list_session_names().context("could not list sessions")?;
+    let targets: Vec<String> = match target_args.is_empty() && !session_names.is_empty() {
+        true => vec![session_names[0].clone()],
+        false => resolve_targets(target_args.iter(), &session_names)
             .context("invalid `--session` argument")?,
     };
 
@@ -261,10 +269,11 @@ pub fn show(action: ShowAction) -> Result<()> {
 pub fn list(action: ListAction) -> Result<()> {
     let ListAction { full, limit } = action;
 
-    let sessions = list_sessions().context("could not list sessions")?;
-    let limit = limit.min(sessions.len());
+    let session_names = list_session_names().context("could not list sessions")?;
+    let limit = limit.min(session_names.len());
 
-    for (index, session) in sessions[0..limit].iter().enumerate() {
+    for (index, target) in session_names[0..limit].iter().enumerate() {
+        let session = read_session(&target).context("could not read session data")?;
         println!("{}: {} ({})", index + 1, session.name, format_datetime(session.recorded_at));
         let len = session.records.len();
         let n = if full { len } else { 5.min(len) };
@@ -283,7 +292,7 @@ pub fn list(action: ListAction) -> Result<()> {
         println!();
     }
 
-    println!("({} / {} sessions)", limit, sessions.len());
+    println!("({} / {} sessions)", limit, session_names.len());
 
     Ok(())
 }
@@ -291,10 +300,10 @@ pub fn list(action: ListAction) -> Result<()> {
 pub fn remove(action: RemoveAction) -> Result<()> {
     let RemoveAction { all, session: target_args } = action;
 
-    let sessions = list_sessions().context("could not list sessions")?;
+    let session_names = list_session_names().context("could not list sessions")?;
     let targets: Vec<String> = match all {
-        true => sessions.iter().map(|session| session.name.clone()).collect(),
-        false => resolve_targets(target_args.iter(), &sessions)
+        true => session_names,
+        false => resolve_targets(target_args.iter(), &session_names)
             .context("invalid `--session` argument")?,
     };
 
@@ -367,52 +376,36 @@ mod test {
 
     #[test]
     fn test_resolve_target_by_index() {
-        let now = DateTime::parse_from_rfc3339("2020-01-01T00:00:00Z").unwrap().into();
-        let sessions = vec![
-            SessionSummary { name: "test1".into(), recorded_at: now, records: Vec::new() },
-            SessionSummary { name: "test2".into(), recorded_at: now, records: Vec::new() },
-        ];
-        let actual = resolve_target("@2", &sessions);
+        let names = vec!["test1".into(), "test2".into()];
+        let actual = resolve_target("@2", &names);
         let expected = Some("test2".into());
         assert_eq!(expected, actual.ok());
     }
 
     #[test]
     fn test_resolve_target_by_name() {
-        let now = DateTime::parse_from_rfc3339("2020-01-01T00:00:00Z").unwrap().into();
-        let sessions = vec![
-            SessionSummary { name: "test1".into(), recorded_at: now, records: Vec::new() },
-            SessionSummary { name: "test2".into(), recorded_at: now, records: Vec::new() },
-        ];
-        let actual = resolve_target("test1", &sessions);
+        let names = vec!["test1".into(), "test2".into()];
+        let actual = resolve_target("test1", &names);
         let expected = Some("test1".into());
         assert_eq!(expected, actual.ok());
     }
 
     #[test]
     fn test_resolve_target_index_out_of_range() {
-        let now = DateTime::parse_from_rfc3339("2020-01-01T00:00:00Z").unwrap().into();
-        let sessions = vec![
-            SessionSummary { name: "test1".into(), recorded_at: now, records: Vec::new() },
-            SessionSummary { name: "test2".into(), recorded_at: now, records: Vec::new() },
-        ];
-        let actual = resolve_target("@123", &sessions);
+        let names = vec!["test1".into(), "test2".into()];
+        let actual = resolve_target("@123", &names);
         assert!(actual.is_err());
     }
 
     #[test]
     fn test_resolve_target_unknown_name() {
-        let now = DateTime::parse_from_rfc3339("2020-01-01T00:00:00Z").unwrap().into();
-        let sessions = vec![
-            SessionSummary { name: "test1".into(), recorded_at: now, records: Vec::new() },
-            SessionSummary { name: "test2".into(), recorded_at: now, records: Vec::new() },
-        ];
-        let actual = resolve_target("test3", &sessions);
+        let names = vec!["test1".into(), "test2".into()];
+        let actual = resolve_target("test3", &names);
         assert!(actual.is_err());
     }
 
     #[test]
-    fn test_lookup_commands() {
+    fn test_collect_commands() {
         let now = DateTime::parse_from_rfc3339("2020-01-01T00:00:00Z").unwrap().into();
         let sessions = vec![
             SessionSummary {
@@ -448,11 +441,11 @@ mod test {
                 ],
             },
         ];
-        let actual = lookup_commands(vec!["test2", "test1"].iter(), &sessions);
-        let expected: Vec<String> = vec!["cmd2a", "cmd2b", "cmd2c", "cmd1a", "cmd1b"]
+        let actual = collect_commands(&sessions);
+        let expected: Vec<String> = vec!["cmd1a", "cmd1b", "cmd2a", "cmd2b", "cmd2c"]
             .into_iter()
             .map(ToOwned::to_owned)
             .collect();
-        assert_eq!(Some(expected), actual.ok());
+        assert_eq!(expected, actual);
     }
 }
