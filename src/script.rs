@@ -5,9 +5,14 @@ use std::path::Path;
 use anyhow::{Context, Result};
 
 pub fn read_script<B: BufRead>(reader: B) -> Result<Vec<String>> {
+    let is_empty = |line: &String| {
+        let line = line.trim();
+        line.is_empty() || line.starts_with("#!")
+    };
+
     reader
         .lines()
-        .filter(|line| !line.as_ref().is_ok_and(|line| line.trim().is_empty()))
+        .filter(|line| !line.as_ref().is_ok_and(is_empty))
         .map(|line| line.context("could not read line"))
         .collect()
 }
@@ -45,6 +50,14 @@ mod test {
         let content = b"abc\ndef\n";
         let actual = read_script(BufReader::new(Cursor::new(content)));
         let expected = Some(vec!["abc".to_owned(), "def".to_owned()]);
+        assert_eq!(expected, actual.ok());
+    }
+
+    #[test]
+    fn test_read_script_filter_empty_lines() {
+        let content = b"   abc   \n   \n   #! shebang   \n   def   \n";
+        let actual = read_script(BufReader::new(Cursor::new(content)));
+        let expected = Some(vec!["   abc   ".to_owned(), "   def   ".to_owned()]);
         assert_eq!(expected, actual.ok());
     }
 
