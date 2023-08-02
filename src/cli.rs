@@ -273,7 +273,7 @@ pub fn list(action: ListAction) -> Result<()> {
     let limit = limit.min(session_names.len());
 
     for (index, target) in session_names[0..limit].iter().enumerate() {
-        let session = read_session(&target).context("could not read session data")?;
+        let session = read_session(target).context("could not read session data")?;
         println!("{}: {} ({})", index + 1, session.name, format_datetime(session.recorded_at));
         let len = session.records.len();
         let n = if full { len } else { 5.min(len) };
