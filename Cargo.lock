@@ -125,6 +125,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ca8f255e4b8027970e78db75e78831229c9815fdbfa67eb1a1b777a62e24b4a0"
 dependencies = [
  "clap_builder",
+ "clap_derive",
+ "once_cell",
 ]
 
 [[package]]
@@ -447,7 +449,6 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
- "clap_derive",
  "duct",
  "rand",
  "serde",

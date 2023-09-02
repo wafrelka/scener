@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Local, Utc};
-use clap_derive::{Parser, Subcommand};
+use clap::{Parser, Subcommand};
 
 use crate::{
     execute, list_session_names, read_script_from_files, read_script_from_stdin, read_session,
