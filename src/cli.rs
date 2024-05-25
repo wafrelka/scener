@@ -10,8 +10,8 @@ use clap::{Parser, Subcommand};
 use crate::{
     execute, list_session_names, needs_newline, print_session, print_session_brief,
     print_session_script, read_script_from_files, read_script_from_stdin, read_session,
-    remove_session, write_session, CommandRecord, CommandStatus, Environment, Session,
-    SessionSummary,
+    remove_session, resolve_references, write_session, CommandRecord, CommandStatus, Environment,
+    Session, SessionSummary,
 };
 
 #[derive(Debug, Parser)]
@@ -69,50 +69,16 @@ pub struct Cli {
     pub action: Action,
 }
 
-fn parse_index(s: &str) -> Option<usize> {
-    if s == "@" {
-        return Some(0);
-    }
-    let i: usize = s.strip_prefix('@').and_then(|s| s.parse().ok())?;
-    match i > 0 {
-        true => Some(i - 1),
-        false => None,
-    }
-}
-
-fn resolve_target(target: &str, session_names: &[String]) -> Result<String> {
-    if let Some(index) = parse_index(target) {
-        let name = session_names.get(index).context("index out of range")?;
-        Ok(name.clone())
-    } else {
-        if !session_names.iter().any(|name| name == target) {
-            bail!("could not find session {}", target);
-        }
-        Ok(target.to_owned())
-    }
-}
-
-fn resolve_targets<I: Iterator<Item = S>, S: AsRef<str>>(
-    targets: I,
-    session_names: &[String],
-) -> Result<Vec<String>> {
-    targets
-        .map(|target| {
-            resolve_target(target.as_ref(), session_names)
-                .with_context(|| format!("could not resolve target {}", target.as_ref()))
-        })
-        .collect()
-}
-
 fn collect_commands(sessions: &[SessionSummary]) -> Vec<String> {
     sessions.iter().flat_map(|session| session.records.iter().map(|r| r.command.clone())).collect()
 }
 
-fn lookup_commands<I: Iterator<Item = S>, S: AsRef<str>>(
-    targets: I,
+fn lookup_commands<I: IntoIterator<Item = S>, S: AsRef<str>>(
+    references: I,
     session_names: &[String],
 ) -> Result<Vec<String>> {
-    let resolved = resolve_targets(targets, session_names).context("could not resolve targets")?;
+    let resolved =
+        resolve_references(references, session_names).context("could not resolve references")?;
     let sessions = resolved
         .into_iter()
         .map(|name| {
@@ -226,11 +192,11 @@ pub fn run(action: RunAction) -> Result<()> {
     Ok(())
 }
 
-pub fn show_to(targets: &[String], script: bool, mut out: impl Write) -> Result<()> {
-    let mut iter = targets.iter();
+pub fn show_to(references: &[String], script: bool, mut out: impl Write) -> Result<()> {
+    let mut iter = references.iter();
 
-    while let Some(target) = iter.next() {
-        let session = read_session(target).context("could not read session data")?;
+    while let Some(reference) = iter.next() {
+        let session = read_session(reference).context("could not read session data")?;
         if script {
             print_session_script(session, &mut out, stderr()).context("could not print output")?;
         } else {
@@ -245,19 +211,19 @@ pub fn show_to(targets: &[String], script: bool, mut out: impl Write) -> Result<
 }
 
 pub fn show(action: ShowAction) -> Result<()> {
-    let ShowAction { script, session: target_args, .. } = action;
+    let ShowAction { script, session: reference_args, .. } = action;
 
     let session_names = list_session_names().context("could not list sessions")?;
-    let targets: Vec<String> = match target_args.is_empty() && !session_names.is_empty() {
+    let references: Vec<String> = match reference_args.is_empty() && !session_names.is_empty() {
         true => vec![session_names[0].clone()],
-        false => resolve_targets(target_args.iter(), &session_names)
+        false => resolve_references(reference_args.iter(), &session_names)
             .context("invalid `--session` argument")?,
     };
 
     #[cfg(feature = "clipboard")]
     if action.copy {
         let mut cursor = std::io::Cursor::new(Vec::new());
-        show_to(&targets, script, &mut cursor)?;
+        show_to(&references, script, &mut cursor)?;
         let buffer = cursor.into_inner();
         let text = String::from_utf8_lossy(&buffer);
         let len = text.len();
@@ -268,7 +234,7 @@ pub fn show(action: ShowAction) -> Result<()> {
         return Ok(());
     }
 
-    show_to(&targets, script, stdout())
+    show_to(&references, script, stdout())
 }
 
 pub fn list(action: ListAction) -> Result<()> {
@@ -277,8 +243,8 @@ pub fn list(action: ListAction) -> Result<()> {
     let session_names = list_session_names().context("could not list sessions")?;
     let limit = limit.min(session_names.len());
 
-    for (index, target) in session_names[0..limit].iter().enumerate() {
-        let session = read_session(target).context("could not read session data")?;
+    for (index, reference) in session_names[0..limit].iter().enumerate() {
+        let session = read_session(reference).context("could not read session data")?;
         let key = index + 1;
         let max = (!full).then_some(5);
         print_session_brief(session, key, max, stdout()).context("could not print output")?;
@@ -291,18 +257,18 @@ pub fn list(action: ListAction) -> Result<()> {
 }
 
 pub fn remove(action: RemoveAction) -> Result<()> {
-    let RemoveAction { all, session: target_args } = action;
+    let RemoveAction { all, session: reference_args } = action;
 
     let session_names = list_session_names().context("could not list sessions")?;
-    let targets: Vec<String> = match all {
+    let references: Vec<String> = match all {
         true => session_names,
-        false => resolve_targets(target_args.iter(), &session_names)
+        false => resolve_references(reference_args.iter(), &session_names)
             .context("invalid `--session` argument")?,
     };
 
-    for target in &targets {
-        remove_session(target).context("could not remove session")?;
-        println!("session {} removed", target);
+    for reference in &references {
+        remove_session(reference).context("could not remove session")?;
+        println!("session {} removed", reference);
     }
 
     Ok(())
@@ -326,61 +292,6 @@ mod test {
     use crate::{CommandRecordSummary, SessionSummary};
 
     use super::*;
-
-    #[test]
-    fn test_parse_index_bare_index() {
-        assert_eq!(Some(0), parse_index("@"));
-    }
-
-    #[test]
-    fn test_parse_index_zero_index() {
-        assert_eq!(None, parse_index("@0"));
-    }
-
-    #[test]
-    fn test_parse_index_one_index() {
-        assert_eq!(Some(0), parse_index("@1"));
-    }
-
-    #[test]
-    fn test_parse_index_integer_index() {
-        assert_eq!(Some(4), parse_index("@5"));
-    }
-
-    #[test]
-    fn test_parse_index_invalid_index() {
-        assert_eq!(None, parse_index("@abc"));
-    }
-
-    #[test]
-    fn test_resolve_target_by_index() {
-        let names = vec!["test1".into(), "test2".into()];
-        let actual = resolve_target("@2", &names);
-        let expected = Some("test2".into());
-        assert_eq!(expected, actual.ok());
-    }
-
-    #[test]
-    fn test_resolve_target_by_name() {
-        let names = vec!["test1".into(), "test2".into()];
-        let actual = resolve_target("test1", &names);
-        let expected = Some("test1".into());
-        assert_eq!(expected, actual.ok());
-    }
-
-    #[test]
-    fn test_resolve_target_index_out_of_range() {
-        let names = vec!["test1".into(), "test2".into()];
-        let actual = resolve_target("@123", &names);
-        assert!(actual.is_err());
-    }
-
-    #[test]
-    fn test_resolve_target_unknown_name() {
-        let names = vec!["test1".into(), "test2".into()];
-        let actual = resolve_target("test3", &names);
-        assert!(actual.is_err());
-    }
 
     #[test]
     fn test_collect_commands() {
