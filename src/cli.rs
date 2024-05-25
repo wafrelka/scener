@@ -10,16 +10,9 @@ use clap::{Parser, Subcommand};
 use crate::{
     execute, list_session_names, needs_newline, print_session, print_session_brief,
     print_session_script, read_script_from_files, read_script_from_stdin, read_session,
-    remove_session, resolve_references, write_session, CommandRecord, CommandStatus, Environment,
-    Session, SessionSummary,
+    remove_session, resolve_references, scan_line, write_session, CommandRecord, CommandStatus,
+    Environment, Session, SessionSummary,
 };
-
-#[cfg(feature = "readline")]
-use rustyline::error::ReadlineError;
-#[cfg(feature = "readline")]
-use rustyline::DefaultEditor;
-#[cfg(feature = "readline")]
-use std::cell::OnceCell;
 
 #[derive(Debug, Parser)]
 pub struct RunAction {
@@ -117,45 +110,6 @@ fn run_command(env: Environment, command: String) -> Result<(Environment, Comman
     Ok((result.new_env, record, ok))
 }
 
-#[cfg(feature = "readline")]
-pub fn scan_line(editor: &mut OnceCell<DefaultEditor>) -> Result<Option<String>> {
-    let history_path = crate::get_history_path()?;
-
-    if editor.get().is_none() {
-        let mut e = DefaultEditor::new().context("could not initialize line editor")?;
-        let _ = e.load_history(&history_path); // TODO: print warning message
-        editor.get_or_init(|| e);
-    }
-    let editor = editor.get_mut().unwrap();
-
-    loop {
-        match editor.readline("==> ") {
-            Ok(line) => {
-                editor.add_history_entry(&line).context("could not update line editor history")?;
-                let _ = editor.append_history(&history_path); // TODO: print warning message
-                return Ok(Some(line));
-            }
-            Err(ReadlineError::Interrupted) | Err(ReadlineError::Eof) => {
-                return Ok(None);
-            }
-            Err(ReadlineError::WindowResized) => {
-                continue;
-            }
-            Err(err) => return Err(err).context("could not read command from STDIN"),
-        }
-    }
-}
-
-#[cfg(not(feature = "readline"))]
-pub fn scan_line_raw() -> Result<Option<String>> {
-    eprint!("==> ");
-    let line = match std::io::stdin().lines().next() {
-        Some(c) => Some(c.context("could not read command from STDIN")?),
-        None => None,
-    };
-    Ok(line)
-}
-
 pub fn run(action: RunAction) -> Result<()> {
     let RunAction {
         interactive,
@@ -183,9 +137,6 @@ pub fn run(action: RunAction) -> Result<()> {
         Vec::new()
     };
 
-    #[cfg(feature = "readline")]
-    let mut editor = OnceCell::new();
-
     let mut terminated = false;
     let mut env = Environment::default();
     let mut records = Vec::new();
@@ -199,14 +150,7 @@ pub fn run(action: RunAction) -> Result<()> {
                 if !interactive {
                     break;
                 }
-
-                #[cfg(feature = "readline")]
-                let line = scan_line(&mut editor)?;
-
-                #[cfg(not(feature = "readline"))]
-                let line = scan_line_raw()?;
-
-                match line {
+                match scan_line()? {
                     Some(c) => c,
                     None => break,
                 }
