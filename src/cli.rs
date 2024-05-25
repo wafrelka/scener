@@ -93,7 +93,7 @@ fn lookup_commands<I: IntoIterator<Item = S>, S: AsRef<str>>(
 fn run_command(env: Environment, command: String) -> Result<(Environment, CommandRecord, bool)> {
     println!("$ {}", command);
 
-    let result = execute(&command, env, &mut std::io::stdout().lock())
+    let result = execute(&command, env, &mut stdout().lock())
         .with_context(|| format!("could not execute command {}", command))?;
 
     if needs_newline(&result.output) {
@@ -141,45 +141,44 @@ pub fn run(action: RunAction) -> Result<()> {
     let mut env = Environment::default();
     let mut records = Vec::new();
 
-    for command in commands.into_iter() {
-        if terminated {
-            records.push(CommandRecord {
-                command,
-                output: Default::default(),
-                status: CommandStatus::Skipped,
-            });
-            continue;
-        }
-        if !records.is_empty() {
-            println!();
-        }
+    let mut lines = std::io::stdin().lines();
+    let mut iter = commands.into_iter();
+
+    loop {
+        let command = match iter.next() {
+            Some(c) => c,
+            None => {
+                if !interactive {
+                    break;
+                }
+                eprint!("==> ");
+                match lines.next() {
+                    Some(c) => c.context("could not read next command from STDIN")?,
+                    None => break,
+                }
+            }
+        };
+
         let (e, r, ok) = run_command(env, command)?;
         env = e;
         records.push(r);
         terminated = terminated || (checked && !ok);
+
+        if terminated {
+            break;
+        }
+
+        if iter.len() > 0 || interactive {
+            println!();
+        }
     }
 
-    if interactive {
-        let mut lines = std::io::stdin().lines();
-        loop {
-            if terminated {
-                break;
-            }
-            if !records.is_empty() {
-                println!();
-            }
-
-            eprint!("==> ");
-            let command = match lines.next() {
-                Some(c) => c.context("could not read next command from STDIN")?,
-                None => break,
-            };
-
-            let (e, r, ok) = run_command(env, command)?;
-            env = e;
-            records.push(r);
-            terminated = terminated || (checked && !ok);
-        }
+    for command in iter {
+        records.push(CommandRecord {
+            command,
+            output: Default::default(),
+            status: CommandStatus::Skipped,
+        });
     }
 
     let session = Session::new(Utc::now(), records);
