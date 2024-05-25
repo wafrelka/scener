@@ -1,11 +1,14 @@
+use std::io::stderr;
+use std::io::stdout;
 use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
-use chrono::{DateTime, Local, Utc};
+use chrono::Utc;
 use clap::{Parser, Subcommand};
 
 use crate::{
-    execute, list_session_names, read_script_from_files, read_script_from_stdin, read_session,
+    execute, list_session_names, needs_newline, print_session, print_session_brief,
+    print_session_script, read_script_from_files, read_script_from_stdin, read_session,
     remove_session, write_session, CommandRecord, CommandStatus, Environment, Session,
     SessionSummary,
 };
@@ -60,15 +63,6 @@ pub enum Action {
 pub struct Cli {
     #[command(subcommand)]
     pub action: Action,
-}
-
-fn format_datetime(dt: DateTime<Utc>) -> String {
-    let local: DateTime<Local> = dt.into();
-    local.format("%Y-%m-%d %H:%M:%S").to_string()
-}
-
-fn needs_newline(s: &str) -> bool {
-    !s.is_empty() && !s.ends_with('\n')
 }
 
 fn parse_index(s: &str) -> Option<usize> {
@@ -240,26 +234,10 @@ pub fn show(action: ShowAction) -> Result<()> {
 
     for target in targets {
         let session = read_session(&target).context("could not read session data")?;
-        eprintln!("session {} ({})", session.name, format_datetime(session.recorded_at));
-
-        for (i, record) in session.records.into_iter().enumerate() {
-            if script {
-                println!("{}", record.command);
-                continue;
-            }
-
-            if !record.status.is_executed() {
-                continue;
-            }
-            if i > 0 {
-                println!();
-            }
-            println!("$ {}", record.command);
-
-            print!("{}", record.output);
-            if needs_newline(&record.output) {
-                println!();
-            }
+        if script {
+            print_session_script(session, stdout(), stderr()).context("could not print output")?;
+        } else {
+            print_session(session, stdout(), stderr()).context("could not print output")?;
         }
     }
 
@@ -274,21 +252,9 @@ pub fn list(action: ListAction) -> Result<()> {
 
     for (index, target) in session_names[0..limit].iter().enumerate() {
         let session = read_session(target).context("could not read session data")?;
-        println!("{}: {} ({})", index + 1, session.name, format_datetime(session.recorded_at));
-        let len = session.records.len();
-        let n = if full { len } else { 5.min(len) };
-        let rem = len - n;
-        for record in session.records.iter().take(n) {
-            let marker = match record.status {
-                CommandStatus::Succeeded => "$",
-                CommandStatus::Failed => "$",
-                CommandStatus::Skipped => "?",
-            };
-            println!("    {} {}", marker, record.command);
-        }
-        if rem > 0 {
-            println!("    ... ({} more commands)", rem);
-        }
+        let key = index + 1;
+        let max = (!full).then_some(5);
+        print_session_brief(session, key, max, stdout()).context("could not print output")?;
         println!();
     }
 
@@ -333,21 +299,6 @@ mod test {
     use crate::{CommandRecordSummary, SessionSummary};
 
     use super::*;
-
-    #[test]
-    fn test_needs_newline_empty() {
-        assert!(!needs_newline(""));
-    }
-
-    #[test]
-    fn test_needs_newline_with_newline() {
-        assert!(!needs_newline("abc\ndef\n"));
-    }
-
-    #[test]
-    fn test_needs_newline_without_newline() {
-        assert!(needs_newline("abc\ndef"));
-    }
 
     #[test]
     fn test_parse_index_bare_index() {
