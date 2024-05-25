@@ -222,6 +222,10 @@ pub fn run(action: RunAction) -> Result<()> {
             break;
         }
 
+        if !ok {
+            eprintln!("command exited with non-zero exit code");
+        }
+
         if iter.len() > 0 || interactive {
             println!();
         }
@@ -240,7 +244,7 @@ pub fn run(action: RunAction) -> Result<()> {
     eprintln!("\nsession {} recorded", session.name);
 
     if terminated {
-        bail!("command terminated with non-zero exit code");
+        bail!("command exited with non-zero exit code");
     }
     Ok(())
 }
