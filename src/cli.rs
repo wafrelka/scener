@@ -214,9 +214,14 @@ pub fn show(action: ShowAction) -> Result<()> {
     let ShowAction { script, session: reference_args, .. } = action;
 
     let session_names = list_session_names().context("could not list sessions")?;
-    let references: Vec<String> = match reference_args.is_empty() && !session_names.is_empty() {
-        true => vec![session_names[0].clone()],
-        false => resolve_references(reference_args.iter(), &session_names)
+    if session_names.is_empty() {
+        bail!("no sessions recorded");
+    }
+
+    let latest = session_names[0].clone();
+    let references: Vec<String> = match reference_args.is_empty() {
+        true => vec![latest],
+        false => resolve_references(&reference_args, &session_names)
             .context("invalid `--session` argument")?,
     };
 
