@@ -119,8 +119,11 @@ fn run_command(env: Environment, command: String) -> Result<(Environment, Comman
 
 #[cfg(feature = "readline")]
 pub fn scan_line(editor: &mut OnceCell<DefaultEditor>) -> Result<Option<String>> {
+    let history_path = crate::get_history_path()?;
+
     if editor.get().is_none() {
-        let e = DefaultEditor::new().context("could not initialize line editor")?;
+        let mut e = DefaultEditor::new().context("could not initialize line editor")?;
+        let _ = e.load_history(&history_path); // TODO: print warning message
         editor.get_or_init(|| e);
     }
     let editor = editor.get_mut().unwrap();
@@ -129,6 +132,7 @@ pub fn scan_line(editor: &mut OnceCell<DefaultEditor>) -> Result<Option<String>>
         match editor.readline("==> ") {
             Ok(line) => {
                 editor.add_history_entry(&line).context("could not update line editor history")?;
+                let _ = editor.append_history(&history_path); // TODO: print warning message
                 return Ok(Some(line));
             }
             Err(ReadlineError::Interrupted) | Err(ReadlineError::Eof) => {

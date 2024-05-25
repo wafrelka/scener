@@ -7,3 +7,9 @@ pub fn get_session_dir() -> Result<PathBuf> {
         .context("could not locate xdg app data directory")?;
     Ok(base_dirs.get_data_file("sessions"))
 }
+
+pub fn get_history_path() -> Result<PathBuf> {
+    let base_dirs = xdg::BaseDirectories::with_prefix("scener")
+        .context("could not locate xdg app data directory")?;
+    Ok(base_dirs.get_data_file("history"))
+}
