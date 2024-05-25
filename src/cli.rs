@@ -232,12 +232,17 @@ pub fn show(action: ShowAction) -> Result<()> {
             .context("invalid `--session` argument")?,
     };
 
-    for target in targets {
+    let mut iter = targets.into_iter();
+
+    while let Some(target) = iter.next() {
         let session = read_session(&target).context("could not read session data")?;
         if script {
             print_session_script(session, stdout(), stderr()).context("could not print output")?;
         } else {
             print_session(session, stdout(), stderr()).context("could not print output")?;
+        }
+        if iter.len() > 0 {
+            println!();
         }
     }
 
