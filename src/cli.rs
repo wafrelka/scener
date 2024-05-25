@@ -1,5 +1,6 @@
 use std::io::stderr;
 use std::io::stdout;
+use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
@@ -31,6 +32,9 @@ pub struct RunAction {
 pub struct ShowAction {
     #[arg(short, long)]
     script: bool,
+    #[cfg(feature = "clipboard")]
+    #[arg(short, long)]
+    copy: bool,
     session: Vec<String>,
 }
 
@@ -222,8 +226,26 @@ pub fn run(action: RunAction) -> Result<()> {
     Ok(())
 }
 
+pub fn show_to(targets: &[String], script: bool, mut out: impl Write) -> Result<()> {
+    let mut iter = targets.iter();
+
+    while let Some(target) = iter.next() {
+        let session = read_session(target).context("could not read session data")?;
+        if script {
+            print_session_script(session, &mut out, stderr()).context("could not print output")?;
+        } else {
+            print_session(session, &mut out, stderr()).context("could not print output")?;
+        }
+        if iter.len() > 0 {
+            writeln!(&mut out)?;
+        }
+    }
+
+    Ok(())
+}
+
 pub fn show(action: ShowAction) -> Result<()> {
-    let ShowAction { script, session: target_args } = action;
+    let ShowAction { script, session: target_args, .. } = action;
 
     let session_names = list_session_names().context("could not list sessions")?;
     let targets: Vec<String> = match target_args.is_empty() && !session_names.is_empty() {
@@ -232,21 +254,21 @@ pub fn show(action: ShowAction) -> Result<()> {
             .context("invalid `--session` argument")?,
     };
 
-    let mut iter = targets.into_iter();
-
-    while let Some(target) = iter.next() {
-        let session = read_session(&target).context("could not read session data")?;
-        if script {
-            print_session_script(session, stdout(), stderr()).context("could not print output")?;
-        } else {
-            print_session(session, stdout(), stderr()).context("could not print output")?;
-        }
-        if iter.len() > 0 {
-            println!();
-        }
+    #[cfg(feature = "clipboard")]
+    if action.copy {
+        let mut cursor = std::io::Cursor::new(Vec::new());
+        show_to(&targets, script, &mut cursor)?;
+        let buffer = cursor.into_inner();
+        let text = String::from_utf8_lossy(&buffer);
+        let len = text.len();
+        arboard::Clipboard::new()
+            .and_then(|mut cb| cb.set_text(text))
+            .context("could not set text to clipboard")?;
+        eprintln!("{} chars copied into clipboard", len);
+        return Ok(());
     }
 
-    Ok(())
+    show_to(&targets, script, stdout())
 }
 
 pub fn list(action: ListAction) -> Result<()> {
