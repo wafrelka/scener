@@ -213,6 +213,11 @@ pub fn run(action: RunAction) -> Result<()> {
             }
         };
 
+        if interactive && command.trim() == "!" {
+            records.pop();
+            continue;
+        }
+
         let (e, r, ok) = run_command(env, command)?;
         env = e;
         records.push(r);
