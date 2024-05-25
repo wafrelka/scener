@@ -14,6 +14,13 @@ use crate::{
     Session, SessionSummary,
 };
 
+#[cfg(feature = "readline")]
+use rustyline::error::ReadlineError;
+#[cfg(feature = "readline")]
+use rustyline::DefaultEditor;
+#[cfg(feature = "readline")]
+use std::cell::OnceCell;
+
 #[derive(Debug, Parser)]
 pub struct RunAction {
     #[arg(short, long)]
@@ -110,6 +117,41 @@ fn run_command(env: Environment, command: String) -> Result<(Environment, Comman
     Ok((result.new_env, record, ok))
 }
 
+#[cfg(feature = "readline")]
+pub fn scan_line(editor: &mut OnceCell<DefaultEditor>) -> Result<Option<String>> {
+    if editor.get().is_none() {
+        let e = DefaultEditor::new().context("could not initialize line editor")?;
+        editor.get_or_init(|| e);
+    }
+    let editor = editor.get_mut().unwrap();
+
+    loop {
+        match editor.readline("==> ") {
+            Ok(line) => {
+                editor.add_history_entry(&line).context("could not update line editor history")?;
+                return Ok(Some(line));
+            }
+            Err(ReadlineError::Interrupted) | Err(ReadlineError::Eof) => {
+                return Ok(None);
+            }
+            Err(ReadlineError::WindowResized) => {
+                continue;
+            }
+            Err(err) => return Err(err).context("could not read command from STDIN"),
+        }
+    }
+}
+
+#[cfg(not(feature = "readline"))]
+pub fn scan_line_raw() -> Result<Option<String>> {
+    eprint!("==> ");
+    let line = match std::io::stdin().lines().next() {
+        Some(c) => Some(c.context("could not read command from STDIN")?),
+        None => None,
+    };
+    Ok(line)
+}
+
 pub fn run(action: RunAction) -> Result<()> {
     let RunAction {
         interactive,
@@ -137,11 +179,13 @@ pub fn run(action: RunAction) -> Result<()> {
         Vec::new()
     };
 
+    #[cfg(feature = "readline")]
+    let mut editor = OnceCell::new();
+
     let mut terminated = false;
     let mut env = Environment::default();
     let mut records = Vec::new();
 
-    let mut lines = std::io::stdin().lines();
     let mut iter = commands.into_iter();
 
     loop {
@@ -151,9 +195,15 @@ pub fn run(action: RunAction) -> Result<()> {
                 if !interactive {
                     break;
                 }
-                eprint!("==> ");
-                match lines.next() {
-                    Some(c) => c.context("could not read next command from STDIN")?,
+
+                #[cfg(feature = "readline")]
+                let line = scan_line(&mut editor)?;
+
+                #[cfg(not(feature = "readline"))]
+                let line = scan_line_raw()?;
+
+                match line {
+                    Some(c) => c,
                     None => break,
                 }
             }
