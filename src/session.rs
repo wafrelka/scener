@@ -1,10 +1,12 @@
 use std::fs::{create_dir_all, remove_file, File};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
+
+use crate::get_session_dir;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -122,12 +124,6 @@ fn list_session_names_from_dir(dir: impl AsRef<Path>) -> Result<Vec<String>> {
     sessions.reverse();
 
     Ok(sessions)
-}
-
-fn get_session_dir() -> Result<PathBuf> {
-    let base_dirs = xdg::BaseDirectories::with_prefix("scener")
-        .context("could not locate xdg app data directory")?;
-    Ok(base_dirs.get_data_file("sessions"))
 }
 
 pub fn write_session(session: &Session) -> Result<()> {
